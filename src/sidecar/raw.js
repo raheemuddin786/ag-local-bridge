@@ -8,8 +8,8 @@ const { callSidecarChat } = require('./cascade');
 
 // Map raw-inference string enum → sidecar numeric model value
 const MODEL_ENUM_TO_VALUE = {
-  MODEL_PLACEHOLDER_M84: 1018,
-  MODEL_PLACEHOLDER_M16: 1037,
+  MODEL_PLACEHOLDER_M18: 1018,
+  MODEL_PLACEHOLDER_M37: 1037,
   MODEL_PLACEHOLDER_M36: 1036,
   MODEL_PLACEHOLDER_M35: 1035,
   MODEL_PLACEHOLDER_M26: 1026,
@@ -466,10 +466,10 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
   const info = await discoverSidecar(ctx);
   if (!info) throw new Error('Sidecar not discovered');
 
-  if (!info.csrfTokens || info.csrfTokens.length === 0) {
-    throw new Error('Sidecar discovered but no CSRF tokens available');
+  if (!info.sessionTokens || info.sessionTokens.length === 0) {
+    throw new Error('Sidecar discovered but no session tokens available');
   }
-  const mainCsrf = info.csrfTokens[0];
+  const primaryToken = info.sessionTokens[0];
 
   // Find a working LS port — try non-extension ports first, then extension port as fallback.
   // The LS ports may have died while the extension port stays alive; trying all ports
@@ -481,7 +481,7 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
   let lsPort = null;
   for (const port of lsPorts) {
     try {
-      await makeH2JsonCall(port, mainCsrf, info.certPath, 'GetStatus', {});
+      await makeH2JsonCall(port, primaryToken, info.credentialPath, 'GetStatus', {});
       lsPort = port;
       break;
     } catch {
@@ -499,7 +499,7 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
 
     const freshInfo = await discoverSidecar(ctx);
     if (freshInfo) {
-      const freshCsrf = freshInfo.csrfTokens[0];
+      const freshToken = freshInfo.sessionTokens[0];
       const freshPorts = [
         ...freshInfo.actualPorts.filter((p) => p !== freshInfo.extensionServerPort),
         freshInfo.extensionServerPort,
@@ -507,7 +507,7 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
 
       for (const port of freshPorts) {
         try {
-          await makeH2JsonCall(port, freshCsrf, freshInfo.certPath, 'GetStatus', {});
+          await makeH2JsonCall(port, freshToken, freshInfo.credentialPath, 'GetStatus', {});
           lsPort = port;
           log(ctx, `✅ Active recovery succeeded! Connected to fresh port: ${port}`);
           break;
@@ -552,7 +552,16 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
 
     try {
       const result = await enqueueInference(
-        () => makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetModelResponse', reqBody, 1, INFERENCE_TIMEOUT_MS),
+        () =>
+          makeH2JsonCall(
+            lsPort,
+            primaryToken,
+            info.credentialPath,
+            'GetModelResponse',
+            reqBody,
+            1,
+            INFERENCE_TIMEOUT_MS,
+          ),
         prompt.length,
       );
 
