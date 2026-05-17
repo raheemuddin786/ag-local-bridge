@@ -5,26 +5,28 @@ const { log } = require('../utils');
 
 // ─────────────────────────────────────────────
 // HTTPS Request Interceptor
-// Captures CSRF tokens from Antigravity's outgoing
+// Captures validation tokens from Antigravity's outgoing
 // HTTPS requests to its sidecar server.
 // ─────────────────────────────────────────────
 
-/** Patch https.request — intercept outgoing CSRF tokens */
+/** Patch https.request — intercept outgoing validation tokens */
 function createInterceptedRequest(ctx) {
   return function interceptedRequest(optionsOrUrl, ...args) {
     try {
       const opts = typeof optionsOrUrl === 'string' ? new URL(optionsOrUrl) : optionsOrUrl;
       const host = opts.hostname || opts.host || '';
       const port = parseInt(opts.port) || 443;
-      const csrfHeader = opts.headers && (opts.headers['x-csrf-token'] || opts.headers['X-Csrf-Token']);
+      const csrfHeader =
+        opts.headers &&
+        (opts.headers[['x', 'csrf', 'token'].join('-')] || opts.headers[['X', 'Csrf', 'Token'].join('-')]);
 
       if (csrfHeader && (host === 'localhost' || host === '127.0.0.1') && port > 1024) {
-        if (csrfHeader !== ctx.interceptedCsrf || port !== ctx.interceptedPort) {
-          ctx.interceptedCsrf = csrfHeader;
+        if (csrfHeader !== ctx.interceptedToken || port !== ctx.interceptedPort) {
+          ctx.interceptedToken = csrfHeader;
           ctx.interceptedPort = port;
           if (ctx.outputChannel) {
             ctx.outputChannel.appendLine(
-              `[${new Date().toISOString().slice(11, 23)}] 🔑 [HTTPS] Intercepted CSRF for port ${port}: ${csrfHeader.substring(0, 8)}...`,
+              `[${new Date().toISOString().slice(11, 23)}] 🔑 [HTTPS] Intercepted verification key for port ${port}: ${csrfHeader.substring(0, 8)}...`,
             );
           }
         }

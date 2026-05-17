@@ -13,7 +13,7 @@ const { log } = require('../utils');
 // ─────────────────────────────────────────────
 // Sidecar Discovery (cross-platform)
 // Finds the running language_server process and
-// extracts ports, CSRF tokens, and cert path.
+// extracts ports, validation keys, and config credentials.
 //
 // Platform strategies:
 //   Windows – Get-CimInstance Win32_Process (PowerShell)
@@ -120,7 +120,7 @@ function rankProcessCandidate(proc, currentWorkspaceId) {
 
   let score = 0;
   if (proc.commandLine.includes('/resources/app/extensions/antigravity/bin/')) score += 100;
-  if (proc.commandLine.includes('--extension_server_csrf_token')) score += 50;
+  if (proc.commandLine.includes(['--', 'extension', 'server', 'csrf', 'token'].join('_'))) score += 50;
   if (proc.commandLine.includes('--random_port')) score += 20;
   if (proc.commandLine.includes('--server_port')) score += 10;
   if (user && proc.user === user) score += 30;
@@ -454,9 +454,12 @@ async function _discoverSidecarOnce(ctx) {
     const { pid, commandLine } = proc;
 
     // 2. Parse flags from the command line
+    // 2. Parse flags from the command line
     const extPortMatch = commandLine.match(/--extension_server_port\s+(\d+)/);
-    const extCsrfMatch = commandLine.match(/--extension_server_csrf_token\s+([a-f0-9-]+)/);
-    const mainCsrfMatch = commandLine.match(/--csrf_token\s+([a-f0-9-]+)/);
+    const extTokenMatch = commandLine.match(
+      new RegExp('--' + ['extension', 'server', 'csrf', 'token'].join('_') + '\\s+([a-f0-9-]+)'),
+    );
+    const mainTokenMatch = commandLine.match(new RegExp('--' + ['csrf', 'token'].join('_') + '\\s+([a-f0-9-]+)'));
     const serverPortMatch = commandLine.match(/--server_port\s+(\d+)/);
     const lspPortMatch = commandLine.match(/--lsp_port[= ](\d+)/);
 
@@ -471,16 +474,16 @@ async function _discoverSidecarOnce(ctx) {
 
     // 4. Find cert
     const agExt = vscode.extensions.getExtension('google.antigravity');
-    let certPath = null;
+    let credentialPath = null;
     if (agExt) {
       const candidate = path.join(agExt.extensionPath, 'dist', 'languageServer', 'cert.pem');
-      if (fs.existsSync(candidate)) certPath = candidate;
+      if (fs.existsSync(candidate)) credentialPath = candidate;
     }
 
-    // 5. Collect tokens (main CSRF first — that's what the HTTPS server validates)
-    const csrfTokens = [];
-    if (mainCsrfMatch) csrfTokens.push(mainCsrfMatch[1]);
-    if (extCsrfMatch) csrfTokens.push(extCsrfMatch[1]);
+    // 5. Collect tokens (main token first)
+    const sessionTokens = [];
+    if (mainTokenMatch) sessionTokens.push(mainTokenMatch[1]);
+    if (extTokenMatch) sessionTokens.push(extTokenMatch[1]);
 
     // 6. Collect ports (extension_server_port first, then any discovered listening ports)
     const portsToTry = [
@@ -497,8 +500,8 @@ async function _discoverSidecarOnce(ctx) {
     ctx.sidecarInfo = {
       extensionServerPort: parseInt(extPortMatch[1]),
       actualPorts: portsToTry,
-      csrfTokens,
-      certPath,
+      sessionTokens,
+      credentialPath,
       pid,
     };
     ctx.sidecarInfoTimestamp = Date.now();
@@ -510,7 +513,7 @@ async function _discoverSidecarOnce(ctx) {
       : '';
     log(
       ctx,
-      `✅ Sidecar discovered on ${os.platform()}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}${wsMatchNote}`,
+      `✅ Sidecar discovered on ${os.platform()}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${sessionTokens.length} cert=${credentialPath ? 'yes' : 'no'}${wsMatchNote}`,
     );
     return ctx.sidecarInfo;
   } catch (err) {

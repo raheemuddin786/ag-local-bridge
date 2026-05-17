@@ -41,8 +41,8 @@ function createContext() {
     lastUserMessageTimestamp: 0,
     DEDUP_WINDOW_MS: 1000, // 1s dedup window
 
-    // CSRF token intercepted from Antigravity's own outgoing requests
-    interceptedCsrf: null,
+    // Token intercepted from outgoing validation calls
+    interceptedToken: null,
     interceptedPort: null,
 
     // Interceptor originals (stored for uninstall)

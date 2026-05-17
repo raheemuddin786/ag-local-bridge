@@ -72,7 +72,7 @@ describe('discoverSidecar platform dispatch', () => {
       const result = await harness.discovery.discoverSidecar(createCtx());
       assert.equal(result.extensionServerPort, 40759);
       assert.deepEqual(result.actualPorts, [40759, 39201]);
-      assert.deepEqual(result.csrfTokens, [
+      assert.deepEqual(result.sessionTokens, [
         '5772a62d-9302-4825-a701-1a85cbe3bc01',
         '00dc95ac-46dd-4443-8d5a-a2f33782bb02',
       ]);
@@ -103,7 +103,7 @@ describe('discoverSidecar platform dispatch', () => {
       assert.equal(result.pid, '639160');
       assert.equal(result.extensionServerPort, 46237);
       assert.deepEqual(result.actualPorts, [46237, 43405, 40935]);
-      assert.deepEqual(result.csrfTokens, [
+      assert.deepEqual(result.sessionTokens, [
         '6830c0ad-2ffd-493b-913d-f0207685cf2c',
         '1ad08e9c-3424-43ca-b40e-c42b6248f017',
       ]);

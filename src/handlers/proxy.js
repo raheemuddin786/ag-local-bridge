@@ -23,7 +23,7 @@ async function handleProxy(ctx, req, res) {
   const lsPorts = info.actualPorts.filter((p) => p !== info.extensionServerPort);
   for (const port of lsPorts) {
     try {
-      const result = await makeH2JsonCall(port, info.csrfTokens[0], info.certPath, method, rpcBody);
+      const result = await makeH2JsonCall(port, info.sessionTokens[0], info.credentialPath, method, rpcBody);
       return sendJson(res, 200, result);
     } catch (_e) {
       /* try next port */

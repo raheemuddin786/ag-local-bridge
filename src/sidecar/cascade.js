@@ -50,7 +50,7 @@ async function callSidecarChat(
     .filter((m) => m.role === 'user')
     .map((m) => extractText(m.content))
     .join('\n');
-  const mainCsrf = info.csrfTokens[0];
+  const primaryToken = info.sessionTokens[0];
   const vlog = (msg) => verboseLog(ctx, msg);
 
   // Find a working LS port
@@ -58,7 +58,7 @@ async function callSidecarChat(
   let lsPort = null;
   for (const port of lsPorts) {
     try {
-      await makeH2JsonCall(port, mainCsrf, info.certPath, 'GetStatus', {});
+      await makeH2JsonCall(port, primaryToken, info.credentialPath, 'GetStatus', {});
       lsPort = port;
       break;
     } catch (e) {
@@ -132,7 +132,13 @@ async function callSidecarChat(
             startPayload.workspaceUris = [workspaceUri];
           }
           const startBytes = encodeProto('exa.language_server_pb.StartCascadeRequest', startPayload);
-          const respBytes = await makeH2ProtoCall(lsPort, mainCsrf, info.certPath, 'StartCascade', startBytes);
+          const respBytes = await makeH2ProtoCall(
+            lsPort,
+            primaryToken,
+            info.credentialPath,
+            'StartCascade',
+            startBytes,
+          );
           const startResult = decodeProto('exa.language_server_pb.StartCascadeResponse', respBytes);
           const newId = startResult && startResult.cascadeId;
 
@@ -191,7 +197,7 @@ async function callSidecarChat(
     }
     try {
       const sendBytes = encodeProto('exa.language_server_pb.SendUserCascadeMessageRequest', sendPayload);
-      await makeH2ProtoStreamingCall(lsPort, mainCsrf, info.certPath, 'SendUserCascadeMessage', sendBytes);
+      await makeH2ProtoStreamingCall(lsPort, primaryToken, info.credentialPath, 'SendUserCascadeMessage', sendBytes);
       log(ctx, `  ✅ SendUserCascadeMessage dispatched (attempt ${attempt + 1})`);
       vlog(`  📦 Payload: ${JSON.stringify(sendPayload).substring(0, 1000)}`);
     } catch (e) {
@@ -208,7 +214,9 @@ async function callSidecarChat(
       await new Promise((r) => setTimeout(r, 1500));
       const elapsed = Math.round((Date.now() - pollStart) / 1000);
       try {
-        const traj = await makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetCascadeTrajectory', { cascadeId });
+        const traj = await makeH2JsonCall(lsPort, primaryToken, info.credentialPath, 'GetCascadeTrajectory', {
+          cascadeId,
+        });
         const steps = (traj && traj.trajectory && traj.trajectory.steps) || [];
         const status = traj && traj.status;
         vlog(`  [poll ${elapsed}s] steps=${steps.length} status=${status}`);

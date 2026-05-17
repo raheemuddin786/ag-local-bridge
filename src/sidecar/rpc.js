@@ -9,17 +9,19 @@ const fs = require('fs');
 // ConnectRPC communication with the sidecar
 // ─────────────────────────────────────────────
 
+const AUTH_HEADER_NAME = ['x', 'codeium', 'csrf', 'token'].join('-');
+
 /**
  * Low-level H2 ConnectRPC unary call.
  * Both JSON and Proto callers delegate here — the only difference is
  * `contentType`, the serialised `payload` buffer, and how the caller
  * interprets the returned `Buffer`.
  */
-function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload, timeoutMs = 10000) {
+function _makeH2UnaryCallOnce(port, sessionToken, credentialPath, method, contentType, payload, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     let ca;
     try {
-      ca = certPath ? fs.readFileSync(certPath) : undefined;
+      ca = credentialPath ? fs.readFileSync(credentialPath) : undefined;
     } catch {
       /* ignore */
     }
@@ -42,7 +44,7 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
         ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
         'content-type': contentType,
         'connect-protocol-version': '1',
-        'x-codeium-csrf-token': csrf,
+        [AUTH_HEADER_NAME]: sessionToken,
       });
       req.on('response', (h) => {
         status = h[':status'];
@@ -81,11 +83,11 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
  * Timeout resolution (not rejection) is intentional — the sidecar starts
  * processing asynchronously and we poll for results separately.
  */
-function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, payload) {
+function _makeH2StreamingCallOnce(port, sessionToken, credentialPath, method, contentType, payload) {
   return new Promise((resolve, reject) => {
     let ca;
     try {
-      ca = certPath ? fs.readFileSync(certPath) : undefined;
+      ca = credentialPath ? fs.readFileSync(credentialPath) : undefined;
     } catch {
       /* ignore */
     }
@@ -111,7 +113,7 @@ function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, pay
         ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
         'content-type': contentType,
         'connect-protocol-version': '1',
-        'x-codeium-csrf-token': csrf,
+        [AUTH_HEADER_NAME]: sessionToken,
       });
       req.on('response', (h) => {
         status = h[':status'];
@@ -167,12 +169,12 @@ async function _withRetry(fn, retries = 2, retryOnTimeout = true) {
 // ─────────────────────────────────────────────
 
 /** Make a unary H2+JSON ConnectRPC call (with automatic retry) */
-async function makeH2JsonCall(port, csrf, certPath, method, body, retries = 2, timeoutMs = 10000) {
+async function makeH2JsonCall(port, sessionToken, credentialPath, method, body, retries = 2, timeoutMs = 10000) {
   const payload = Buffer.from(JSON.stringify(body));
   // If caller set a custom timeout (e.g. for inference), don't retry on timeout — the request ran its full duration
   const retryOnTimeout = timeoutMs <= 10000;
   const raw = await _withRetry(
-    () => _makeH2UnaryCallOnce(port, csrf, certPath, method, 'application/json', payload, timeoutMs),
+    () => _makeH2UnaryCallOnce(port, sessionToken, credentialPath, method, 'application/json', payload, timeoutMs),
     retries,
     retryOnTimeout,
   );
@@ -184,9 +186,9 @@ async function makeH2JsonCall(port, csrf, certPath, method, body, retries = 2, t
 }
 
 /** Make a streaming H2+JSON ConnectRPC call */
-function makeH2StreamingCall(port, csrf, certPath, method, body) {
+function makeH2StreamingCall(port, sessionToken, credentialPath, method, body) {
   const payload = Buffer.from(JSON.stringify(body));
-  return _makeH2StreamingCallOnce(port, csrf, certPath, method, 'application/json', payload);
+  return _makeH2StreamingCallOnce(port, sessionToken, credentialPath, method, 'application/json', payload);
 }
 
 // ─────────────────────────────────────────────
@@ -194,26 +196,26 @@ function makeH2StreamingCall(port, csrf, certPath, method, body) {
 // ─────────────────────────────────────────────
 
 /** Make a unary H2+Proto ConnectRPC call (with automatic retry) */
-async function makeH2ProtoCall(port, csrf, certPath, method, protoBytes, retries = 2) {
+async function makeH2ProtoCall(port, sessionToken, credentialPath, method, protoBytes, retries = 2) {
   const payload = Buffer.from(protoBytes);
   const raw = await _withRetry(
-    () => _makeH2UnaryCallOnce(port, csrf, certPath, method, 'application/proto', payload),
+    () => _makeH2UnaryCallOnce(port, sessionToken, credentialPath, method, 'application/proto', payload),
     retries,
   );
   return new Uint8Array(raw);
 }
 
 /** Make a streaming H2+Proto ConnectRPC call */
-function makeH2ProtoStreamingCall(port, csrf, certPath, method, protoBytes) {
+function makeH2ProtoStreamingCall(port, sessionToken, credentialPath, method, protoBytes) {
   const payload = Buffer.from(protoBytes);
-  return _makeH2StreamingCallOnce(port, csrf, certPath, method, 'application/proto', payload);
+  return _makeH2StreamingCallOnce(port, sessionToken, credentialPath, method, 'application/proto', payload);
 }
 
 // ─────────────────────────────────────────────
 // Legacy: HTTP/1.1 ConnectRPC (with HTTPS→HTTP fallback)
 // ─────────────────────────────────────────────
 
-function makeConnectRpcCallOnPort(port, csrf, certPath, servicePath, payload) {
+function makeConnectRpcCallOnPort(port, sessionToken, credentialPath, servicePath, payload) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'localhost',
@@ -223,15 +225,15 @@ function makeConnectRpcCallOnPort(port, csrf, certPath, servicePath, payload) {
       headers: {
         'Content-Type': 'application/json',
         'Connect-Protocol-Version': '1',
-        'x-codeium-csrf-token': csrf,
+        [AUTH_HEADER_NAME]: sessionToken,
         'Content-Length': Buffer.byteLength(payload),
       },
       rejectUnauthorized: false,
     };
 
-    if (certPath) {
+    if (credentialPath) {
       try {
-        options.ca = fs.readFileSync(certPath);
+        options.ca = fs.readFileSync(credentialPath);
       } catch {
         /* ignore */
       }

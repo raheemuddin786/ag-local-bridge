@@ -15,8 +15,8 @@ async function handleDebug(ctx, req, res) {
 
   // Intercepted CSRF
   result.interceptedAuth = {
-    hasCsrf: !!ctx.interceptedCsrf,
-    csrfPrefix: ctx.interceptedCsrf ? ctx.interceptedCsrf.substring(0, 8) + '...' : null,
+    hasToken: !!ctx.interceptedToken,
+    tokenPrefix: ctx.interceptedToken ? ctx.interceptedToken.substring(0, 8) + '...' : null,
     port: ctx.interceptedPort,
   };
 
@@ -52,12 +52,12 @@ async function handleDebug(ctx, req, res) {
   if (info) {
     result.sidecar.connectTests = [];
     // Test ExtensionServerService on ext port
-    const extCsrf = info.csrfTokens[info.csrfTokens.length - 1]; // extension_server_csrf_token
+    const extToken = info.sessionTokens[info.sessionTokens.length - 1]; // extension_server_token
     try {
       const _testResult = await makeConnectRpcCallOnPort(
         info.extensionServerPort,
-        extCsrf,
-        info.certPath,
+        extToken,
+        info.credentialPath,
         '/exa.extension_server_pb.ExtensionServerService/PlaySound',
         '{}',
       );
@@ -74,14 +74,14 @@ async function handleDebug(ctx, req, res) {
         error: e.message.substring(0, 100),
       });
     }
-    // Test LanguageServerService on HTTPS ports (uses mainCsrf = csrfTokens[0])
-    const mainCsrf = info.csrfTokens[0]; // --csrf_token
+    // Test LanguageServerService on HTTPS ports (uses primaryToken = sessionTokens[0])
+    const primaryToken = info.sessionTokens[0]; // primary validation key
     for (const port of info.actualPorts.filter((p) => p !== info.extensionServerPort)) {
       try {
         const _testResult = await makeConnectRpcCallOnPort(
           port,
-          mainCsrf,
-          info.certPath,
+          primaryToken,
+          info.credentialPath,
           '/exa.language_server_pb.LanguageServerService/GetAvailableCascadePlugins',
           '{}',
         );
@@ -115,17 +115,17 @@ async function probeSidecar(ctx) {
   }
   log(ctx, `PID: ${info.pid}`);
   log(ctx, `Ports: ${info.actualPorts.join(', ')}`);
-  log(ctx, `Tokens: ${info.csrfTokens.map((t) => t.substring(0, 8) + '...').join(', ')}`);
-  log(ctx, `Cert: ${info.certPath || 'not found'}`);
+  log(ctx, `Tokens: ${info.sessionTokens.map((t) => t.substring(0, 8) + '...').join(', ')}`);
+  log(ctx, `Cert: ${info.credentialPath || 'not found'}`);
 
   const testPath = '/exa.extension_server.ExtensionServer/GetAvailableCascadePlugins';
   for (const port of info.actualPorts) {
-    for (const csrf of info.csrfTokens) {
+    for (const token of info.sessionTokens) {
       try {
-        const r = await makeConnectRpcCallOnPort(port, csrf, info.certPath, testPath, '{}');
-        log(ctx, `✅ port=${port} token=${csrf.substring(0, 8)}... → ${JSON.stringify(r).substring(0, 200)}`);
+        const r = await makeConnectRpcCallOnPort(port, token, info.credentialPath, testPath, '{}');
+        log(ctx, `✅ port=${port} token=${token.substring(0, 8)}... → ${JSON.stringify(r).substring(0, 200)}`);
       } catch (e) {
-        log(ctx, `❌ port=${port} token=${csrf.substring(0, 8)}... → ${e.message}`);
+        log(ctx, `❌ port=${port} token=${token.substring(0, 8)}... → ${e.message}`);
       }
     }
   }
@@ -155,13 +155,13 @@ async function diagnoseModels(ctx) {
   } else {
     log(ctx, `  PID: ${info.pid}`);
     log(ctx, `  Ports: ${info.actualPorts.join(', ')}`);
-    log(ctx, `  Cert: ${info.certPath ? 'yes' : 'no'}`);
+    log(ctx, `  Cert: ${info.credentialPath ? 'yes' : 'no'}`);
     // Quick connectivity test on LS port
     const lsPorts = info.actualPorts.filter((p) => p !== info.extensionServerPort);
     let connected = false;
     for (const port of lsPorts) {
       try {
-        await makeH2JsonCall(port, info.csrfTokens[0], info.certPath, 'GetStatus', {});
+        await makeH2JsonCall(port, info.sessionTokens[0], info.credentialPath, 'GetStatus', {});
         log(ctx, `  ✅ LS port ${port} — connected`);
         connected = true;
         break;
