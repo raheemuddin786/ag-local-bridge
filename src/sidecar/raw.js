@@ -205,14 +205,54 @@ function parseToolCalls(responseText) {
  * @param {number} maxTurnsToKeep - Number of recent conversational turns to preserve fully (default: 8)
  * @returns {Array} Optimized, chronologically correct messages array
  */
-function pruneMessageHistory(messages, maxTurnsToKeep = 8) {
-  if (!messages || messages.length <= maxTurnsToKeep + 2) return messages;
+/**
+ * Globally-Accepted 2026 Production-Grade Proxy-Side Context Optimizer.
+ * Preserves strict message chronology, keeps matching tool call/response pairs,
+ * preserves all system instructions, and maintains immediate conversational history.
+ *
+ * Implements:
+ *   1. Immutability (zero side-effects) via object cloning.
+ *   2. Adaptive context window based on dynamic character limit (fallback to turns).
+ *   3. Safe truncation of massive tool outputs (including well-formed JSON summary previews).
+ *   4. Full support for structured content-parts array formatting.
+ *
+ * @param {Array} messages - Original OpenAI-compatible messages array
+ * @param {number} limit - Maximum characters to keep (or turns if <= 100)
+ * @returns {Array} Optimized, chronologically correct, cloned messages array
+ */
+function pruneMessageHistory(messages, limit = 40000) {
+  if (!messages || messages.length === 0) return messages;
+
+  let maxCharsToKeep = 40000;
+  let minTurnsToKeep = 4;
 
   const totalMessages = messages.length;
   const keepIndices = new Set();
 
-  // 1. Identify Suffix (Always keep the latest conversation turns)
-  const suffixStartIndex = Math.max(0, totalMessages - maxTurnsToKeep);
+  // 1. Identify Suffix (Adaptive window using character count threshold or strict turns)
+  let suffixStartIndex = 0;
+  if (limit <= 100) {
+    minTurnsToKeep = limit;
+    suffixStartIndex = Math.max(0, totalMessages - minTurnsToKeep);
+  } else {
+    maxCharsToKeep = limit;
+    let cumulativeSize = 0;
+    suffixStartIndex = totalMessages;
+
+    for (let i = totalMessages - 1; i >= 0; i--) {
+      const turnsKept = totalMessages - i;
+      const msgText = extractText(messages[i].content);
+      cumulativeSize += msgText.length;
+
+      suffixStartIndex = i;
+
+      if (turnsKept >= minTurnsToKeep && cumulativeSize > maxCharsToKeep) {
+        suffixStartIndex = Math.min(totalMessages, i + 1);
+        break;
+      }
+    }
+  }
+
   for (let i = suffixStartIndex; i < totalMessages; i++) {
     keepIndices.add(i);
   }
@@ -240,7 +280,6 @@ function pruneMessageHistory(messages, maxTurnsToKeep = 8) {
   }
 
   // 4. Force Keep both sides of any tool chain if at least one side is in our keep set
-  // This prevents 'missing tool call id' or 'missing tool response' API validation crashes
   let addedNewIndex = true;
   while (addedNewIndex) {
     addedNewIndex = false;
@@ -263,26 +302,53 @@ function pruneMessageHistory(messages, maxTurnsToKeep = 8) {
     }
   }
 
-  // 5. Build the final array maintaining original chronological order
-  const finalMessages = messages.filter((_, idx) => keepIndices.has(idx));
+  // 5. Clone and Truncate kept messages in a single clean pass (Zero Side-Effects)
+  const finalMessages = [];
+  for (let i = 0; i < totalMessages; i++) {
+    if (keepIndices.has(i)) {
+      const msg = messages[i];
+      const cloned = { ...msg };
 
-  // 6. 2026 Compression Standard: Safely compress massive tool outputs in the final set
-  for (let i = 0; i < finalMessages.length; i++) {
-    const msg = finalMessages[i];
-    // Only compress older tool messages (outside the suffix window) that contain massive data blocks
-    const originalIndex = messages.indexOf(msg);
-    if (originalIndex < suffixStartIndex && msg.role === 'tool' && typeof msg.content === 'string') {
-      // If the tool content is > 8KB (e.g. read_file output), compress the middle
-      if (msg.content.length > 8000) {
-        // Try to identify if it is raw JSON to avoid breaking JSON parsers
-        const isJson = msg.content.trim().startsWith('{') || msg.content.trim().startsWith('[');
-        if (!isJson) {
-          msg.content =
-            msg.content.substring(0, 4000) +
-            `\n\n... [TRUNCATED ${msg.content.length - 6000} CHARS OF OLD CONTEXT FOR SPEED] ...\n\n` +
-            msg.content.substring(msg.content.length - 2000);
+      // Clone content to prevent reference leaks
+      if (Array.isArray(msg.content)) {
+        cloned.content = msg.content.map((p) => (p && typeof p === 'object' ? { ...p } : p));
+      } else if (msg.content && typeof msg.content === 'object') {
+        cloned.content = { ...msg.content };
+      }
+
+      // 6. 2026 Compression Standard: Safely compress massive tool outputs in older history
+      if (i < suffixStartIndex && msg.role === 'tool') {
+        const plainText = extractText(cloned.content);
+        if (plainText.length > 8000) {
+          const isJson = plainText.trim().startsWith('{') || plainText.trim().startsWith('[');
+          if (isJson) {
+            try {
+              const parsed = JSON.parse(plainText);
+              const previewObj = {
+                warning: 'Data truncated for speed',
+                original_length_chars: plainText.length,
+                summary: 'Massive JSON tool output truncated for prompt context optimization.',
+                preview: Array.isArray(parsed)
+                  ? parsed.slice(0, 3)
+                  : Object.fromEntries(Object.entries(parsed).slice(0, 5)),
+              };
+              cloned.content = JSON.stringify(previewObj, null, 2);
+            } catch {
+              cloned.content =
+                plainText.substring(0, 4000) +
+                `\n\n... [TRUNCATED ${plainText.length - 6000} CHARS OF OLD CONTEXT FOR SPEED] ...\n\n` +
+                plainText.substring(plainText.length - 2000);
+            }
+          } else {
+            cloned.content =
+              plainText.substring(0, 4000) +
+              `\n\n... [TRUNCATED ${plainText.length - 6000} CHARS OF OLD CONTEXT FOR SPEED] ...\n\n` +
+              plainText.substring(plainText.length - 2000);
+          }
         }
       }
+
+      finalMessages.push(cloned);
     }
   }
 
@@ -549,4 +615,4 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
   }
 }
 
-module.exports = { callRawInference, formatMessagesAsPrompt, parseToolCalls };
+module.exports = { callRawInference, formatMessagesAsPrompt, parseToolCalls, pruneMessageHistory };

@@ -2,7 +2,7 @@
   "name": "ag-local-bridge",
   "displayName": "Antigravity Rashizun Bridge",
   "description": "Exposes the running Antigravity instance as a local OpenAI-compatible API on localhost:11435",
-  "version": "1.1.79",
+  "version": "1.1.80",
   "publisher": "marcodiniz",
   "license": "MIT",
   "icon": "./icon.png",

@@ -4,7 +4,9 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 
-const { formatMessagesAsPrompt, parseToolCalls } = require(path.join(__dirname, '..', 'src', 'sidecar', 'raw'));
+const { formatMessagesAsPrompt, parseToolCalls, pruneMessageHistory } = require(
+  path.join(__dirname, '..', 'src', 'sidecar', 'raw'),
+);
 
 // ─── formatMessagesAsPrompt ───
 
@@ -148,5 +150,99 @@ The weather should be nice.
     assert.equal(args.location, 'San Francisco, CA');
     assert.equal(args.unit, 'fahrenheit');
     assert.equal(result.content, 'The weather should be nice.');
+  });
+});
+
+// ─── pruneMessageHistory ───
+
+describe('pruneMessageHistory', () => {
+  it('preserves system prompts and suffix window turns dynamically', () => {
+    const messages = [
+      { role: 'system', content: 'System instruction' },
+      { role: 'user', content: 'Turn 1' },
+      { role: 'assistant', content: 'Turn 2' },
+      { role: 'user', content: 'Turn 3' },
+      { role: 'assistant', content: 'Turn 4' },
+      { role: 'user', content: 'Turn 5' },
+    ];
+    // Keep last 4 turns
+    const pruned = pruneMessageHistory(messages, 4);
+    assert.equal(pruned.length, 5, 'Should keep 5 messages (1 system + 4 suffix)');
+    assert.equal(pruned[0].content, 'System instruction');
+    assert.equal(pruned[1].content, 'Turn 2');
+    assert.equal(pruned[4].content, 'Turn 5');
+  });
+
+  it('keeps both tool call and tool response in sync (bilateral pairing)', () => {
+    const messages = [
+      { role: 'system', content: 'System instruction' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'tc_1', type: 'function', function: { name: 'bash', arguments: '{}' } }],
+      },
+      { role: 'tool', tool_call_id: 'tc_1', content: 'Command successful' },
+      { role: 'user', content: 'New user prompt' },
+      { role: 'assistant', content: 'Assistant response' },
+    ];
+    // Keep last 3 turns (indices 2, 3, 4), which includes the tool response.
+    // Bilateral sync will pull in the assistant tool call (index 1) which is outside the suffix window.
+    const pruned = pruneMessageHistory(messages, 3);
+    assert.equal(pruned.length, 5, 'Should keep all 5 messages due to bilateral tool sync');
+  });
+
+  it('performs clone-on-prune immutability to prevent payload mutation side-effects', () => {
+    const messages = [
+      { role: 'system', content: 'System' },
+      { role: 'user', content: 'Small query' },
+      { role: 'assistant', content: 'Response' },
+    ];
+    const pruned = pruneMessageHistory(messages, 2);
+    assert.notEqual(pruned[0], messages[0], 'Message objects should be cloned');
+    assert.notEqual(pruned[1], messages[1], 'Message objects should be cloned');
+  });
+
+  it('safe-truncates massive JSON tool observations outside suffix window', () => {
+    const largeObj = [];
+    for (let i = 0; i < 100; i++) {
+      largeObj.push({ id: i, payload: 'a'.repeat(100) });
+    }
+    const massiveJson = JSON.stringify(largeObj);
+    const messages = [
+      { role: 'system', content: 'System instruction' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'tc_1', type: 'function', function: { name: 'db_query', arguments: '{}' } }],
+      },
+      { role: 'tool', tool_call_id: 'tc_1', content: massiveJson },
+      { role: 'user', content: 'Active user turn 1' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'tc_1', type: 'function', function: { name: 'db_query', arguments: '{}' } }],
+      },
+      { role: 'user', content: 'Active turn 3' },
+      { role: 'assistant', content: 'Active turn 4' },
+    ];
+    // Suffix window is last 4 turns (starts at index 3).
+    // Assistant message at index 4 references 'tc_1' tool call and keeps tool response (2) via bilateral sync.
+    const pruned = pruneMessageHistory(messages, 4);
+    const toolMsg = pruned.find((m) => m.role === 'tool');
+    assert.ok(toolMsg, 'Tool message should be preserved');
+    assert.ok(toolMsg.content.includes('Data truncated for speed'), 'Should contain JSON preview warning');
+    const parsed = JSON.parse(toolMsg.content);
+    assert.equal(parsed.warning, 'Data truncated for speed');
+    assert.ok(Array.isArray(parsed.preview), 'Preview field should contain a truncated array slice');
+  });
+
+  it('safely handles structured array content-parts', () => {
+    const messages = [
+      { role: 'system', content: [{ type: 'text', text: 'System content parts' }] },
+      { role: 'user', content: [{ type: 'text', text: 'Query content parts' }] },
+    ];
+    const pruned = pruneMessageHistory(messages, 40000);
+    assert.equal(pruned.length, 2);
+    assert.deepEqual(pruned[0].content, [{ type: 'text', text: 'System content parts' }]);
   });
 });
