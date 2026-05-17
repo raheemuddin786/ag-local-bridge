@@ -196,28 +196,177 @@ function parseToolCalls(responseText) {
   };
 }
 
-let inferenceQueue = Promise.resolve();
-
 /**
- * Serialize GetModelResponse calls: only ONE runs at a time, with a 2-second
- * cooldown between consecutive calls. This prevents the sidecar from returning
- * RESOURCE_EXHAUSTED when multiple clients fire parallel requests.
+ * Gap-free, Production-Grade Proxy-Side Context Optimizer.
+ * Preserves strict message chronology, keeps matching tool call/response pairs,
+ * preserves all system instructions, and maintains immediate conversational history.
+ *
+ * @param {Array} messages - Original OpenAI-compatible messages array
+ * @param {number} maxTurnsToKeep - Number of recent conversational turns to preserve fully (default: 8)
+ * @returns {Array} Optimized, chronologically correct messages array
  */
-function enqueueInference(fn) {
-  let resolve, reject;
-  const resultPromise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  inferenceQueue = inferenceQueue.then(async () => {
-    try {
-      resolve(await fn());
-    } catch (err) {
-      reject(err);
+function pruneMessageHistory(messages, maxTurnsToKeep = 8) {
+  if (!messages || messages.length <= maxTurnsToKeep + 2) return messages;
+
+  const totalMessages = messages.length;
+  const keepIndices = new Set();
+
+  // 1. Identify Suffix (Always keep the latest conversation turns)
+  const suffixStartIndex = Math.max(0, totalMessages - maxTurnsToKeep);
+  for (let i = suffixStartIndex; i < totalMessages; i++) {
+    keepIndices.add(i);
+  }
+
+  // 2. Identify and Preserve System Prompts
+  for (let i = 0; i < totalMessages; i++) {
+    if (messages[i].role === 'system') {
+      keepIndices.add(i);
     }
-    await new Promise((r) => setTimeout(r, 2000));
-  });
-  return resultPromise;
+  }
+
+  // 3. Map out Tool Calls and Tool Responses to ensure strict pairing
+  const toolCallMap = new Map(); // Maps tool_call_id -> assistant message index
+  const toolResponseMap = new Map(); // Maps tool_call_id -> tool message index
+
+  for (let i = 0; i < totalMessages; i++) {
+    const msg = messages[i];
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (tc.id) toolCallMap.set(tc.id, i);
+      }
+    } else if (msg.role === 'tool' && msg.tool_call_id) {
+      toolResponseMap.set(msg.tool_call_id, i);
+    }
+  }
+
+  // 4. Force Keep both sides of any tool chain if at least one side is in our keep set
+  // This prevents 'missing tool call id' or 'missing tool response' API validation crashes
+  let addedNewIndex = true;
+  while (addedNewIndex) {
+    addedNewIndex = false;
+    for (const [callId, callIdx] of toolCallMap.entries()) {
+      const responseIdx = toolResponseMap.get(callId);
+
+      if (responseIdx !== undefined) {
+        const hasCall = keepIndices.has(callIdx);
+        const hasResponse = keepIndices.has(responseIdx);
+
+        // Bilateral sync: if we have one, we must include the other!
+        if (hasCall && !hasResponse) {
+          keepIndices.add(responseIdx);
+          addedNewIndex = true;
+        } else if (hasResponse && !hasCall) {
+          keepIndices.add(callIdx);
+          addedNewIndex = true;
+        }
+      }
+    }
+  }
+
+  // 5. Build the final array maintaining original chronological order
+  const finalMessages = messages.filter((_, idx) => keepIndices.has(idx));
+
+  // 6. 2026 Compression Standard: Safely compress massive tool outputs in the final set
+  for (let i = 0; i < finalMessages.length; i++) {
+    const msg = finalMessages[i];
+    // Only compress older tool messages (outside the suffix window) that contain massive data blocks
+    const originalIndex = messages.indexOf(msg);
+    if (originalIndex < suffixStartIndex && msg.role === 'tool' && typeof msg.content === 'string') {
+      // If the tool content is > 8KB (e.g. read_file output), compress the middle
+      if (msg.content.length > 8000) {
+        // Try to identify if it is raw JSON to avoid breaking JSON parsers
+        const isJson = msg.content.trim().startsWith('{') || msg.content.trim().startsWith('[');
+        if (!isJson) {
+          msg.content =
+            msg.content.substring(0, 4000) +
+            `\n\n... [TRUNCATED ${msg.content.length - 6000} CHARS OF OLD CONTEXT FOR SPEED] ...\n\n` +
+            msg.content.substring(msg.content.length - 2000);
+        }
+      }
+    }
+  }
+
+  return finalMessages;
+}
+
+// A production-grade SJF Priority Queue with Aging
+class PriorityInferenceQueue {
+  constructor() {
+    this.queue = [];
+    this.running = false;
+    this.cooldownMs = 2000;
+  }
+
+  /**
+   * Enqueue a job with a dynamic priority cost based on prompt size.
+   * @param {Function} taskFn - The async function that executes the request.
+   * @param {number} promptLength - The size of the prompt (cost/burst estimate).
+   * @returns {Promise<any>}
+   */
+  enqueue(taskFn, promptLength) {
+    let resolve, reject;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+
+    const job = {
+      taskFn,
+      promptLength,
+      addedAt: Date.now(),
+      resolve,
+      reject,
+    };
+
+    this.queue.push(job);
+    this._processNext();
+
+    return promise;
+  }
+
+  async _processNext() {
+    if (this.running || this.queue.length === 0) return;
+    this.running = true;
+
+    try {
+      while (this.queue.length > 0) {
+        const now = Date.now();
+
+        // ─── SHORTEST-JOB-FIRST + AGING ALGORITHM ───
+        // We sort based on prompt size, but we subtract 200 virtual characters
+        // for every second a request has been waiting to prevent starvation.
+        this.queue.sort((a, b) => {
+          const ageA = (now - a.addedAt) / 1000; // in seconds
+          const ageB = (now - b.addedAt) / 1000;
+
+          const scoreA = a.promptLength - ageA * 200;
+          const scoreB = b.promptLength - ageB * 200;
+
+          return scoreA - scoreB;
+        });
+
+        const job = this.queue.shift();
+
+        try {
+          const result = await job.taskFn();
+          job.resolve(result);
+        } catch (err) {
+          job.reject(err);
+        }
+
+        // Rest the sidecar gRPC layer for 2 seconds before executing next
+        await new Promise((r) => setTimeout(r, this.cooldownMs));
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+}
+
+const priorityQueue = new PriorityInferenceQueue();
+
+function enqueueInference(fn, promptLength = 0) {
+  return priorityQueue.enqueue(fn, promptLength);
 }
 
 /**
@@ -231,11 +380,20 @@ function enqueueInference(fn) {
  * @returns {{ content: string|null, toolCalls: Array|null }}
  */
 async function callRawInference(ctx, messages, modelEnum, tools = null, images = []) {
+  // ─── CONTEXT OPTIMIZATION & PRUNING ───
+  const optimizedMessages = pruneMessageHistory(messages, 8);
+  if (optimizedMessages.length !== messages.length) {
+    log(
+      ctx,
+      `🧹 Payload optimized: Pruned intermediate turns from ${messages.length} down to ${optimizedMessages.length}`,
+    );
+  }
+
   if (images && images.length > 0) {
     log(ctx, `🖼️ Images detected! Raw inference does not support vision. Routing to Cascade API...`);
     const numericModelValue = MODEL_ENUM_TO_VALUE[modelEnum] || 1035;
     // Cascade is the ONLY endpoint that natively supports the 'media' field for images.
-    const text = await callSidecarChat(ctx, messages, numericModelValue, null, null, images);
+    const text = await callSidecarChat(ctx, optimizedMessages, numericModelValue, null, null, images);
     return { content: text, toolCalls: null };
   }
 
@@ -264,15 +422,44 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
       // try next port
     }
   }
+
+  // ─── SELF-HEALING PORT RECOVERY ───
   if (!lsPort) {
-    // Invalidate sidecar cache so next request re-discovers fresh ports
+    log(ctx, '⚠️ No reachable LS port in cached sidecar info. Attempting active recovery (fresh scan)...');
+
+    // Invalidate the cache and force a new process tree search
+    ctx.sidecarInfo = null;
+    ctx.sidecarInfoTimestamp = 0;
+
+    const freshInfo = await discoverSidecar(ctx);
+    if (freshInfo) {
+      const freshCsrf = freshInfo.csrfTokens[0];
+      const freshPorts = [
+        ...freshInfo.actualPorts.filter((p) => p !== freshInfo.extensionServerPort),
+        freshInfo.extensionServerPort,
+      ];
+
+      for (const port of freshPorts) {
+        try {
+          await makeH2JsonCall(port, freshCsrf, freshInfo.certPath, 'GetStatus', {});
+          lsPort = port;
+          log(ctx, `✅ Active recovery succeeded! Connected to fresh port: ${port}`);
+          break;
+        } catch {
+          // try next port
+        }
+      }
+    }
+  }
+
+  if (!lsPort) {
     ctx.sidecarInfo = null;
     ctx.sidecarInfoTimestamp = 0;
     throw new Error('No reachable LS port');
   }
 
-  // Format the prompt
-  const prompt = formatMessagesAsPrompt(messages, tools);
+  // Format the prompt using optimized history
+  const prompt = formatMessagesAsPrompt(optimizedMessages, tools);
 
   log(ctx, `🧠 Raw inference: ${prompt.length} chars, model=${modelEnum}, tools=${tools ? tools.length : 0}`);
 
@@ -298,8 +485,9 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
     }
 
     try {
-      const result = await enqueueInference(() =>
-        makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetModelResponse', reqBody, 1, INFERENCE_TIMEOUT_MS),
+      const result = await enqueueInference(
+        () => makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetModelResponse', reqBody, 1, INFERENCE_TIMEOUT_MS),
+        prompt.length,
       );
 
       const responseText = (result && result.response) || '';

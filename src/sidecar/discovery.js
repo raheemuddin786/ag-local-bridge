@@ -4,6 +4,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { promisify } = require('util');
 const { execFile } = require('child_process');
 const execFileAsync = promisify(execFile);
@@ -73,10 +74,39 @@ function getCurrentWorkspaceId() {
   try {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) return null;
-    return encodeWorkspaceId(folders[0].uri.fsPath);
+    return {
+      uri: folders[0].uri.toString(),
+      legacy: encodeWorkspaceId(folders[0].uri.fsPath),
+    };
   } catch {
     return null;
   }
+}
+
+function isWorkspaceMatch(commandLine, currentWorkspaceId) {
+  if (!currentWorkspaceId) return false;
+  const wsMatch = commandLine.match(/--workspace_id\s+(\S+)/);
+  if (!wsMatch) return false;
+
+  const candidateId = wsMatch[1].toLowerCase();
+
+  // Support string input for backward compatibility or direct calls
+  if (typeof currentWorkspaceId === 'string') {
+    return candidateId === currentWorkspaceId.toLowerCase();
+  }
+
+  const { uri, legacy } = currentWorkspaceId;
+
+  // 1. Try modern SHA-256 URI hash matching (macOS/Linux standard)
+  if (uri) {
+    const sha256 = crypto.createHash('sha256').update(uri).digest('hex').toLowerCase();
+    if (candidateId === sha256) return true;
+  }
+
+  // 2. Try legacy path encoding matching (Windows fallback)
+  if (legacy && candidateId === legacy.toLowerCase()) return true;
+
+  return false;
 }
 
 function rankProcessCandidate(proc, currentWorkspaceId) {
@@ -100,12 +130,8 @@ function rankProcessCandidate(proc, currentWorkspaceId) {
   if (proc.commandLine.includes('--enable_lsp')) score += 30;
 
   // Strongly prefer the sidecar whose --workspace_id matches the current VS Code workspace.
-  // Case-insensitive to guard against Windows drive-letter casing differences (C: vs c:).
-  if (currentWorkspaceId) {
-    const wsMatch = proc.commandLine.match(/--workspace_id\s+(\S+)/);
-    if (wsMatch && wsMatch[1].toLowerCase() === currentWorkspaceId.toLowerCase()) {
-      score += 200;
-    }
+  if (currentWorkspaceId && isWorkspaceMatch(proc.commandLine, currentWorkspaceId)) {
+    score += 200;
   }
 
   return score;
@@ -478,7 +504,7 @@ async function _discoverSidecarOnce(ctx) {
     ctx.sidecarInfoTimestamp = Date.now();
 
     const wsMatchNote = currentWorkspaceId
-      ? proc.commandLine.match(/--workspace_id\s+(\S+)/)?.[1] === currentWorkspaceId
+      ? isWorkspaceMatch(proc.commandLine, currentWorkspaceId)
         ? ' (workspace match ✅)'
         : ' (workspace mismatch ⚠️)'
       : '';
