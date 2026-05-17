@@ -257,9 +257,18 @@ function pruneMessageHistory(messages, limit = 40000) {
     keepIndices.add(i);
   }
 
-  // 2. Identify and Preserve System Prompts
+  // Identify the first user message to preserve the main instruction/goal
+  let firstUserIdx = -1;
   for (let i = 0; i < totalMessages; i++) {
-    if (messages[i].role === 'system') {
+    if (messages[i].role === 'user') {
+      firstUserIdx = i;
+      break;
+    }
+  }
+
+  // 2. Identify and Preserve System Prompts & Main Goal
+  for (let i = 0; i < totalMessages; i++) {
+    if (messages[i].role === 'system' || i === firstUserIdx) {
       keepIndices.add(i);
     }
   }
@@ -447,7 +456,7 @@ function enqueueInference(fn, promptLength = 0) {
  */
 async function callRawInference(ctx, messages, modelEnum, tools = null, images = []) {
   // ─── CONTEXT OPTIMIZATION & PRUNING ───
-  const optimizedMessages = pruneMessageHistory(messages, 8);
+  const optimizedMessages = pruneMessageHistory(messages, 40);
   if (optimizedMessages.length !== messages.length) {
     log(
       ctx,

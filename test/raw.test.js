@@ -165,12 +165,13 @@ describe('pruneMessageHistory', () => {
       { role: 'assistant', content: 'Turn 4' },
       { role: 'user', content: 'Turn 5' },
     ];
-    // Keep last 4 turns
+    // Keep last 4 turns + preserve first user message
     const pruned = pruneMessageHistory(messages, 4);
-    assert.equal(pruned.length, 5, 'Should keep 5 messages (1 system + 4 suffix)');
+    assert.equal(pruned.length, 6, 'Should keep 6 messages (1 system + 1 first user + 4 suffix)');
     assert.equal(pruned[0].content, 'System instruction');
-    assert.equal(pruned[1].content, 'Turn 2');
-    assert.equal(pruned[4].content, 'Turn 5');
+    assert.equal(pruned[1].content, 'Turn 1');
+    assert.equal(pruned[2].content, 'Turn 2');
+    assert.equal(pruned[5].content, 'Turn 5');
   });
 
   it('keeps both tool call and tool response in sync (bilateral pairing)', () => {
