@@ -16,9 +16,16 @@ function createInterceptedRequest(ctx) {
       const opts = typeof optionsOrUrl === 'string' ? new URL(optionsOrUrl) : optionsOrUrl;
       const host = opts.hostname || opts.host || '';
       const port = parseInt(opts.port) || 443;
-      const csrfHeader =
-        opts.headers &&
-        (opts.headers[['x', 'csrf', 'token'].join('-')] || opts.headers[['X', 'Csrf', 'Token'].join('-')]);
+      let csrfHeader;
+      if (opts.headers) {
+        const target = ['x', 'csrf', 'token'].join('-').toLowerCase();
+        for (const [key, value] of Object.entries(opts.headers)) {
+          if (key.toLowerCase() === target) {
+            csrfHeader = value;
+            break;
+          }
+        }
+      }
 
       if (csrfHeader && (host === 'localhost' || host === '127.0.0.1') && port > 1024) {
         if (csrfHeader !== ctx.interceptedToken || port !== ctx.interceptedPort) {

@@ -246,4 +246,21 @@ describe('pruneMessageHistory', () => {
     assert.equal(pruned.length, 2);
     assert.deepEqual(pruned[0].content, [{ type: 'text', text: 'System content parts' }]);
   });
+
+  it('soft-truncates excessively massive first user messages (preservation message guard)', () => {
+    const massiveText = 'a'.repeat(20000);
+    const messages = [
+      { role: 'system', content: 'System instruction' },
+      { role: 'user', content: massiveText },
+      { role: 'assistant', content: 'Turn 2' },
+      { role: 'user', content: 'Turn 3' },
+      { role: 'assistant', content: 'Turn 4' },
+      { role: 'user', content: 'Turn 5' },
+    ];
+    const pruned = pruneMessageHistory(messages, 4);
+    const firstUserMsg = pruned.find((m) => m.role === 'user');
+    assert.ok(firstUserMsg, 'First user message should be preserved');
+    assert.ok(firstUserMsg.content.includes('EXCESSIVELY MASSIVE GOAL CONTEXT'), 'Should contain truncation marker');
+    assert.ok(firstUserMsg.content.length < 12000, 'Should be truncated below 12000 characters');
+  });
 });

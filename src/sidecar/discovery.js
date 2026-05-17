@@ -457,9 +457,9 @@ async function _discoverSidecarOnce(ctx) {
     // 2. Parse flags from the command line
     const extPortMatch = commandLine.match(/--extension_server_port\s+(\d+)/);
     const extTokenMatch = commandLine.match(
-      new RegExp('--' + ['extension', 'server', 'csrf', 'token'].join('_') + '\\s+([a-f0-9-]+)'),
+      new RegExp('--' + ['extension', 'server', 'csrf', 'token'].join('_') + '\\s+([a-zA-Z0-9_-]+)'),
     );
-    const mainTokenMatch = commandLine.match(new RegExp('--' + ['csrf', 'token'].join('_') + '\\s+([a-f0-9-]+)'));
+    const mainTokenMatch = commandLine.match(new RegExp('--' + ['csrf', 'token'].join('_') + '\\s+([a-zA-Z0-9_-]+)'));
     const serverPortMatch = commandLine.match(/--server_port\s+(\d+)/);
     const lspPortMatch = commandLine.match(/--lsp_port[= ](\d+)/);
 

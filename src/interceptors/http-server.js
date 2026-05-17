@@ -18,7 +18,14 @@ function createInterceptedCreateServer(ctx) {
     const _originalEmit = server.emit.bind(server);
     server.emit = function (event, req, res) {
       if (event === 'request' && req && req.headers) {
-        const csrf = req.headers[['x', 'codeium', 'csrf', 'token'].join('-')];
+        const searchHeader = ['x', 'codeium', 'csrf', 'token'].join('-').toLowerCase();
+        let csrf;
+        for (const [key, value] of Object.entries(req.headers)) {
+          if (key.toLowerCase() === searchHeader) {
+            csrf = value;
+            break;
+          }
+        }
         if (csrf && csrf.length > 10) {
           // Wrap res.writeHead to check if this request was accepted (not 403)
           const _origWriteHead = res.writeHead.bind(res);

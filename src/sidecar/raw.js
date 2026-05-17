@@ -325,6 +325,14 @@ function pruneMessageHistory(messages, limit = 40000) {
         cloned.content = { ...msg.content };
       }
 
+      // Soft length-limit truncation for the preserved first user message to prevent context exhaustion
+      if (i === firstUserIdx && typeof cloned.content === 'string' && cloned.content.length > 12000) {
+        cloned.content =
+          cloned.content.substring(0, 8000) +
+          `\n\n... [TRUNCATED ${cloned.content.length - 10000} CHARS OF EXCESSIVELY MASSIVE GOAL CONTEXT FOR SPEED] ...\n\n` +
+          cloned.content.substring(cloned.content.length - 2000);
+      }
+
       // 6. 2026 Compression Standard: Safely compress massive tool outputs in older history
       if (i < suffixStartIndex && msg.role === 'tool') {
         const plainText = extractText(cloned.content);
