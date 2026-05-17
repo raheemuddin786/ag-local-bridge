@@ -3,3 +3,4 @@ node_modules/
 *.vsix
 bridge-debug.log
 .kilocode/
+**/.DS_Store
