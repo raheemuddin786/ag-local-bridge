@@ -1,5 +1,8 @@
 node_modules/
+.git/
 .vscode-test/
+.kilocode/
 *.vsix
 bridge-debug.log
-.kilocode/
+.agents/
+.github/

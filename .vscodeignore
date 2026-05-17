@@ -5,6 +5,8 @@
 .github/**
 .agents/**
 .gemini/
+.kilocode/**
+.clineignore
 
 # Build artifacts
 *.vsix
