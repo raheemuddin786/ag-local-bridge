@@ -197,15 +197,6 @@ function parseToolCalls(responseText) {
 }
 
 /**
- * Gap-free, Production-Grade Proxy-Side Context Optimizer.
- * Preserves strict message chronology, keeps matching tool call/response pairs,
- * preserves all system instructions, and maintains immediate conversational history.
- *
- * @param {Array} messages - Original OpenAI-compatible messages array
- * @param {number} maxTurnsToKeep - Number of recent conversational turns to preserve fully (default: 8)
- * @returns {Array} Optimized, chronologically correct messages array
- */
-/**
  * Globally-Accepted 2026 Production-Grade Proxy-Side Context Optimizer.
  * Preserves strict message chronology, keeps matching tool call/response pairs,
  * preserves all system instructions, and maintains immediate conversational history.

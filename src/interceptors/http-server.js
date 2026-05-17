@@ -20,24 +20,24 @@ function createInterceptedCreateServer(ctx) {
     const _originalEmit = server.emit.bind(server);
     server.emit = function (event, req, res) {
       if (event === 'request' && req && req.headers) {
-        let csrf;
+        let capturedToken;
         for (const [key, value] of Object.entries(req.headers)) {
           if (key.toLowerCase() === TARGET_HEADER) {
-            csrf = value;
+            capturedToken = value;
             break;
           }
         }
-        if (csrf && csrf.length > 10) {
+        if (capturedToken && capturedToken.length > 10) {
           // Wrap res.writeHead to check if this request was accepted (not 403)
           const _origWriteHead = res.writeHead.bind(res);
           res.writeHead = function (statusCode, ...whArgs) {
-            if (statusCode !== 403 && csrf !== ctx.interceptedToken) {
-              ctx.interceptedToken = csrf;
+            if (statusCode !== 403 && capturedToken !== ctx.interceptedToken) {
+              ctx.interceptedToken = capturedToken;
               const addr = server.address();
               if (addr && addr.port) ctx.interceptedPort = addr.port;
               if (ctx.outputChannel) {
                 ctx.outputChannel.appendLine(
-                  `[${new Date().toISOString().slice(11, 23)}] 🔑 [SERVER] Captured verification key from accepted request on port ${ctx.interceptedPort}: ${csrf.substring(0, 8)}...`,
+                  `[${new Date().toISOString().slice(11, 23)}] 🔑 [SERVER] Captured verification key from accepted request on port ${ctx.interceptedPort}: ${capturedToken.substring(0, 8)}...`,
                 );
               }
             }
