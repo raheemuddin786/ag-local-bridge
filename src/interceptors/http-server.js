@@ -9,6 +9,8 @@ const { log } = require('../utils');
 // to Antigravity's local HTTP server.
 // ─────────────────────────────────────────────
 
+const TARGET_HEADER = ['x', 'codeium', 'csrf', 'token'].join('-').toLowerCase();
+
 /** Patch http.createServer — observe verification keys on accepted requests */
 function createInterceptedCreateServer(ctx) {
   return function interceptedCreateServer(...args) {
@@ -18,10 +20,9 @@ function createInterceptedCreateServer(ctx) {
     const _originalEmit = server.emit.bind(server);
     server.emit = function (event, req, res) {
       if (event === 'request' && req && req.headers) {
-        const searchHeader = ['x', 'codeium', 'csrf', 'token'].join('-').toLowerCase();
         let csrf;
         for (const [key, value] of Object.entries(req.headers)) {
-          if (key.toLowerCase() === searchHeader) {
+          if (key.toLowerCase() === TARGET_HEADER) {
             csrf = value;
             break;
           }

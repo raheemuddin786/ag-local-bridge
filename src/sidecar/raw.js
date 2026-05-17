@@ -326,11 +326,26 @@ function pruneMessageHistory(messages, limit = 40000) {
       }
 
       // Soft length-limit truncation for the preserved first user message to prevent context exhaustion
-      if (i === firstUserIdx && typeof cloned.content === 'string' && cloned.content.length > 12000) {
-        cloned.content =
-          cloned.content.substring(0, 8000) +
-          `\n\n... [TRUNCATED ${cloned.content.length - 10000} CHARS OF EXCESSIVELY MASSIVE GOAL CONTEXT FOR SPEED] ...\n\n` +
-          cloned.content.substring(cloned.content.length - 2000);
+      if (i === firstUserIdx) {
+        if (typeof cloned.content === 'string') {
+          if (cloned.content.length > 12000) {
+            cloned.content =
+              cloned.content.substring(0, 8000) +
+              `\n\n... [TRUNCATED ${cloned.content.length - 10000} CHARS OF EXCESSIVELY MASSIVE GOAL CONTEXT FOR SPEED] ...\n\n` +
+              cloned.content.substring(cloned.content.length - 2000);
+          }
+        } else if (Array.isArray(cloned.content)) {
+          cloned.content = cloned.content.map((part) => {
+            if (part && typeof part === 'object' && typeof part.text === 'string' && part.text.length > 12000) {
+              const truncatedText =
+                part.text.substring(0, 8000) +
+                `\n\n... [TRUNCATED ${part.text.length - 10000} CHARS OF EXCESSIVELY MASSIVE GOAL CONTEXT FOR SPEED] ...\n\n` +
+                part.text.substring(part.text.length - 2000);
+              return { ...part, text: truncatedText };
+            }
+            return part;
+          });
+        }
       }
 
       // 6. 2026 Compression Standard: Safely compress massive tool outputs in older history

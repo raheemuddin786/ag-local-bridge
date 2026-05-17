@@ -9,6 +9,8 @@ const { log } = require('../utils');
 // HTTPS requests to its sidecar server.
 // ─────────────────────────────────────────────
 
+const TARGET_HEADER = ['x', 'csrf', 'token'].join('-').toLowerCase();
+
 /** Patch https.request — intercept outgoing validation tokens */
 function createInterceptedRequest(ctx) {
   return function interceptedRequest(optionsOrUrl, ...args) {
@@ -18,11 +20,14 @@ function createInterceptedRequest(ctx) {
       const port = parseInt(opts.port) || 443;
       let csrfHeader;
       if (opts.headers) {
-        const target = ['x', 'csrf', 'token'].join('-').toLowerCase();
-        for (const [key, value] of Object.entries(opts.headers)) {
-          if (key.toLowerCase() === target) {
-            csrfHeader = value;
-            break;
+        if (typeof opts.headers.get === 'function') {
+          csrfHeader = opts.headers.get(TARGET_HEADER);
+        } else {
+          for (const [key, value] of Object.entries(opts.headers)) {
+            if (key.toLowerCase() === TARGET_HEADER) {
+              csrfHeader = value;
+              break;
+            }
           }
         }
       }

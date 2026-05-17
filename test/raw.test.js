@@ -263,4 +263,32 @@ describe('pruneMessageHistory', () => {
     assert.ok(firstUserMsg.content.includes('EXCESSIVELY MASSIVE GOAL CONTEXT'), 'Should contain truncation marker');
     assert.ok(firstUserMsg.content.length < 12000, 'Should be truncated below 12000 characters');
   });
+
+  it('soft-truncates excessively massive array-based first user messages (preservation message guard)', () => {
+    const massiveText = 'b'.repeat(20000);
+    const messages = [
+      { role: 'system', content: 'System instruction' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: massiveText },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+        ],
+      },
+      { role: 'assistant', content: 'Turn 2' },
+      { role: 'user', content: 'Turn 3' },
+      { role: 'assistant', content: 'Turn 4' },
+      { role: 'user', content: 'Turn 5' },
+    ];
+    const pruned = pruneMessageHistory(messages, 4);
+    const firstUserMsg = pruned.find((m) => m.role === 'user');
+    assert.ok(firstUserMsg, 'First user message should be preserved');
+    assert.ok(Array.isArray(firstUserMsg.content), 'Content should remain an array');
+    assert.equal(firstUserMsg.content.length, 2, 'Content array should retain all parts');
+    assert.ok(
+      firstUserMsg.content[0].text.includes('EXCESSIVELY MASSIVE GOAL CONTEXT'),
+      'Text part should contain truncation marker',
+    );
+    assert.ok(firstUserMsg.content[0].text.length < 12000, 'Text part should be truncated below 12000 characters');
+  });
 });
