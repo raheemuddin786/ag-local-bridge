@@ -50,6 +50,8 @@ function createContext() {
     // Interceptor originals (stored for uninstall)
     _originalHttpsRequest: null,
     _originalCreateServer: null,
+    _originalH2Connect: null,
+    _interceptedH2Connect: null,
 
     // H2 interceptor captured payloads
     capturedPayloads: [],

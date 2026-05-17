@@ -11,13 +11,13 @@ const { log } = require('../utils');
 
 function install(ctx) {
   try {
-    const _originalH2Connect = http2.connect;
-    http2.connect = function interceptedH2Connect(authority, ...args) {
+    ctx._originalH2Connect = http2.connect;
+    ctx._interceptedH2Connect = function interceptedH2Connect(authority, ...args) {
       let session;
       try {
-        session = _originalH2Connect.call(this, authority, ...args);
+        session = ctx._originalH2Connect.call(this, authority, ...args);
       } catch (_e) {
-        return _originalH2Connect.call(this, authority, ...args);
+        return ctx._originalH2Connect.call(this, authority, ...args);
       }
       try {
         const authorityStr = String(authority);
@@ -76,10 +76,27 @@ function install(ctx) {
       } catch {}
       return session;
     };
+    http2.connect = ctx._interceptedH2Connect;
     log(ctx, `🔌 H2 interceptor installed`);
   } catch (e) {
     log(ctx, `⚠️ H2 interceptor failed: ${e.message}`);
   }
 }
 
-module.exports = { install };
+function uninstall(ctx) {
+  try {
+    if (ctx && ctx._originalH2Connect && http2.connect === ctx._interceptedH2Connect) {
+      http2.connect = ctx._originalH2Connect;
+      log(ctx, `🔌 H2 interceptor removed`);
+    }
+  } catch (e) {
+    log(ctx, `⚠️ H2 interceptor uninstall failed: ${e.message}`);
+  } finally {
+    if (ctx) {
+      ctx._originalH2Connect = null;
+      ctx._interceptedH2Connect = null;
+    }
+  }
+}
+
+module.exports = { install, uninstall };
